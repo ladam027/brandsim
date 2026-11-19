@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brandsim"
+version = "0.1.0"
+description = "Score how closely candidate text matches on-brand reference texts (embeddings + ROUGE-L + Jaccard)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = ["sentence-transformers>=2.2"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+brandsim = "brandsim:main"
+
+[tool.setuptools]
+py-modules = ["brandsim"]
