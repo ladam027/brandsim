@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>brandsim playground</title>
+<meta name="description" content="Upload a small text sample, generate new sentences in the same voice, and score how closely each one matches.">
+<style>
+  :root {
+    --bg: #fafaf9; --panel: #ffffff; --text: #1c1917; --muted: #6b6560; --line: #e7e5e4;
+    --accent: #2563eb; --accent-text: #ffffff; --pass: #15803d; --fail: #b91c1c; --bar: #dbeafe; --bar-fill: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141312; --panel: #1d1c1a; --text: #f5f5f4; --muted: #a8a29e; --line: #2e2c29;
+      --accent: #60a5fa; --accent-text: #0b1220; --pass: #4ade80; --fail: #f87171; --bar: #1e293b; --bar-fill: #60a5fa;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .lede { color: var(--muted); margin: 0 0 24px; max-width: 62ch; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  h2 span { color: var(--muted); font-weight: 400; }
+  textarea { width: 100%; min-height: 160px; resize: vertical; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: center; margin-top: 12px; }
+  label { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+  input[type=number] { width: 72px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  button, .file { font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity: .5; cursor: default; }
+  button:focus-visible, .file:focus-within, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .file input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  .status { color: var(--muted); font-size: 13px; min-height: 1.5em; margin-top: 10px; }
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .stat small { color: var(--muted); }
+  .item { border-top: 1px solid var(--line); padding: 12px 0; }
+  .item:first-child { border-top: 0; }
+  .item p { margin: 0 0 6px; }
+  .metrics { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; align-items: center; }
+  .meter { display: inline-block; width: 80px; height: 6px; background: var(--bar); border-radius: 3px; overflow: hidden; vertical-align: middle; }
+  .meter i { display: block; height: 100%; background: var(--bar-fill); }
+  .pass { color: var(--pass); font-weight: 600; }
+  .fail { color: var(--fail); font-weight: 600; }
+  .closest { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  footer { color: var(--muted); font-size: 13px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>brandsim playground</h1>
+  <p class="lede">Paste or upload a small sample of on-brand text. The page writes new sentences in the same voice, then scores each one against your sample using the same method as the <a href="https://github.com/ladam027/brandsim">brandsim</a> Python tool. Everything runs in your browser and nothing is uploaded anywhere.</p>
+
+  <section>
+    <h2>1. Sample <span>(.txt one per line, or .jsonl with a "text" field)</span></h2>
+    <textarea id="sample" spellcheck="false" placeholder="Paste a few sentences of reference text here..."></textarea>
+    <div class="row">
+      <label class="file" tabindex="-1">Upload file<input type="file" id="file" accept=".txt,.jsonl,.csv,.md,text/plain"></label>
+      <button id="example">Load example</button>
+      <span class="status" id="sampleInfo" style="margin:0"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Generate</h2>
+    <div class="row" style="margin-top:0">
+      <label>Sentences <input type="number" id="count" value="10" min="1" max="50"></label>
+      <label>Closeness
+        <select id="order" style="padding:6px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--text)">
+          <option value="1">Loose (more new phrasing)</option>
+          <option value="2" selected>Balanced</option>
+          <option value="3">Tight (stays near the sample)</option>
+        </select>
+      </label>
+      <label>Pass threshold <input type="number" id="threshold" value="0.7" min="0" max="1" step="0.05"></label>
+      <label><input type="checkbox" id="semantic"> Semantic score (downloads a ~23 MB model once)</label>
+    </div>
+    <div class="row">
+      <button class="primary" id="go">Generate and score</button>
+      <button id="download" disabled>Download JSONL</button>
+    </div>
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+  </section>
+
+  <section id="results" hidden>
+    <h2>3. Results</h2>
+    <div class="summary" id="summary"></div>
+    <div id="list"></div>
+  </section>
+
+  <footer>Sentences come from a word-level Markov chain trained only on your sample, and exact copies of sample sentences are thrown out. Score = 0.6 · semantic + 0.25 · ROUGE-L + 0.15 · Jaccard, each taken against the closest sample sentence. Without the semantic score, the weights are renormalised over the two lexical metrics.</footer>
+</main>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const EXAMPLE = `Thanks for reaching out! Our Everyday Serum is fragrance-free and safe for sensitive skin.
+Apply two drops each morning after cleansing.
+Happy to help! Orders ship within 2 business days.
+You'll get a tracking link by email as soon as your package is on its way.
+We're sorry your order arrived damaged. We'll send a free replacement right away.
+There's no need to return the original.
+Great question! Our Night Repair Cream is vegan and cruelty-free.
+Every jar is made with recyclable packaging.
+Thanks for your patience! We'll email you as soon as the serum is back in stock.
+Happy to help! You can change your shipping address until your order ships.
+Great question! The Everyday Serum works well under makeup and sunscreen.
+We're sorry for the wait. Your refund will reach your card within 5 business days.`;
+
+// ---------- parsing ----------
+function parseSample(raw, name = "") {
+  let texts;
+  if (name.endsWith(".jsonl")) {
+    texts = raw.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l).text).filter(Boolean);
+  } else {
+    texts = raw.split("\n");
+  }
+  return texts
+    .flatMap((t) => t.split(/(?<=[.!?])\s+/))
+    .map((s) => s.trim())
+    .filter((s) => s.split(/\s+/).length >= 3);
+}
+
+// ---------- generation: word-level Markov chain ----------
+const END = "\u0000";
+function buildChain(sentences, k) {
+  const next = new Map(), starts = [];
+  for (const s of sentences) {
+    const w = s.split(/\s+/);
+    if (w.length <= k) continue;
+    starts.push(w.slice(0, k));
+    for (let i = 0; i + k <= w.length; i++) {
+      const key = w.slice(i, i + k).join(" ");
+      if (!next.has(key)) next.set(key, []);
+      next.get(key).push(i + k < w.length ? w[i + k] : END);
+    }
+  }
+  return { next, starts, k };
+}
+const pick = (a) => a[Math.floor(Math.random() * a.length)];
+function generate(chain, sources, n) {
+  const seen = new Set(sources.map((s) => s.toLowerCase()));
+  const out = [];
+  for (let tries = 0; out.length < n && tries < n * 200; tries++) {
+    const w = [...pick(chain.starts)];
+    while (w.length < 40) {
+      const opts = chain.next.get(w.slice(-chain.k).join(" "));
+      if (!opts) break;
+      const nx = pick(opts);
+      if (nx === END) break;
+      w.push(nx);
+    }
+    const s = w.join(" ");
+    if (w.length < 4 || !/[.!?]$/.test(s) || seen.has(s.toLowerCase())) continue;
+    seen.add(s.toLowerCase());
+    out.push(s);
+  }
+  return out;
+}
+
+// ---------- scoring: mirrors brandsim.py ----------
+const tokenize = (t) => t.toLowerCase().match(/[a-z0-9]+(?:'[a-z]+)?/g) || [];
+function jaccard(a, b) {
+  const A = new Set(a), B = new Set(b);
+  if (!A.size && !B.size) return 1;
+  let inter = 0; for (const x of A) if (B.has(x)) inter++;
+  return inter / (A.size + B.size - inter);
+}
+function rougeL(a, b) {
+  if (!a.length || !b.length) return a.length === b.length ? 1 : 0;
+  let prev = new Array(b.length + 1).fill(0);
+  for (const x of a) {
+    const cur = [0];
+    b.forEach((y, j) => cur.push(x === y ? prev[j] + 1 : Math.max(prev[j + 1], cur[j])));
+    prev = cur;
+  }
+  const lcs = prev[b.length];
+  if (!lcs) return 0;
+  const p = lcs / a.length, r = lcs / b.length;
+  return (2 * p * r) / (p + r);
+}
+const dot = (u, v) => u.reduce((s, x, i) => s + x * v[i], 0);
+
+let embedder = null;
+async function getEmbedder() {
+  if (!embedder) {
+    const { pipeline } = await import("https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2");
+    embedder = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
+  }
+  return async (texts) => (await embedder(texts, { pooling: "mean", normalize: true })).tolist();
+}
+
+async function score(cands, refs, threshold, useSemantic) {
+  const w = useSemantic ? { semantic: 0.6, rouge_l: 0.25, jaccard: 0.15 } : { rouge_l: 0.25 / 0.4, jaccard: 0.15 / 0.4 };
+  let cv = null, rv = null;
+  if (useSemantic) {
+    const embed = await getEmbedder();
+    rv = await embed(refs); cv = await embed(cands);
+  }
+  const rt = refs.map(tokenize);
+  return cands.map((text, i) => {
+    const t = tokenize(text);
+    const rl = rt.map((r) => rougeL(t, r));
+    const m = { rouge_l: Math.max(...rl), jaccard: Math.max(...rt.map((r) => jaccard(t, r))) };
+    let closest = rl.indexOf(m.rouge_l);
+    if (cv) {
+      const sims = rv.map((r) => dot(cv[i], r));
+      m.semantic = Math.max(0, Math.max(...sims));
+      closest = sims.indexOf(Math.max(...sims));
+    }
+    const s = Object.keys(w).reduce((acc, k) => acc + w[k] * m[k], 0);
+    const r4 = (x) => Math.round(x * 1e4) / 1e4;
+    return { id: i + 1, text, ...Object.fromEntries(Object.entries(m).map(([k, v]) => [k, r4(v)])),
+      score: r4(s), passed: s >= threshold, closest_reference: closest };
+  });
+}
+
+// ---------- UI ----------
+let fileName = "", lastResults = [];
+function refreshInfo() {
+  try {
+    const n = parseSample($("sample").value, fileName).length;
+    $("sampleInfo").textContent = n ? `${n} sentence${n === 1 ? "" : "s"} in sample` : "";
+  } catch { $("sampleInfo").textContent = "Couldn't read that .jsonl. Each line needs a \"text\" field."; }
+}
+$("sample").addEventListener("input", () => { fileName = ""; refreshInfo(); });
+$("example").onclick = () => { $("sample").value = EXAMPLE; fileName = ""; refreshInfo(); };
+$("file").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  if (f.size > 2_000_000) { $("sampleInfo").textContent = "That file is over 2 MB. A small sample works best."; return; }
+  fileName = f.name.toLowerCase();
+  $("sample").value = await f.text();
+  refreshInfo();
+};
+
+$("go").onclick = async () => {
+  const status = $("status");
+  let refs;
+  try { refs = parseSample($("sample").value, fileName); }
+  catch { status.textContent = "Couldn't read that .jsonl. Each line needs a \"text\" field."; return; }
+  if (refs.length < 3) { status.textContent = "Add at least 3 sentences to the sample first."; return; }
+  const n = Math.min(50, Math.max(1, +$("count").value || 10));
+  const threshold = +$("threshold").value;
+  let k = +$("order").value;
+  let cands = generate(buildChain(refs, k), refs, n);
+  while (cands.length < n && k > 1) { k--; cands = [...new Set([...cands, ...generate(buildChain(refs, k), refs, n - cands.length)])]; }
+  if (!cands.length) { status.textContent = "The sample is too small to make new sentences from. Add more text, or pick Loose."; return; }
+
+  $("go").disabled = true;
+  status.textContent = $("semantic").checked && !embedder ? "Loading the semantic model (first time only)..." : "Scoring...";
+  try {
+    lastResults = await score(cands, refs, threshold, $("semantic").checked);
+  } catch (err) {
+    status.textContent = "The semantic model failed to load, so these use lexical scores only.";
+    $("semantic").checked = false;
+    lastResults = await score(cands, refs, threshold, false);
+  } finally { $("go").disabled = false; }
+  if (status.textContent.startsWith("Loading") || status.textContent === "Scoring...")
+    status.textContent = cands.length < n ? `Made ${cands.length} of ${n}: the sample only supports that many new sentences.` : "";
+  render(lastResults, refs, threshold);
+};
+
+function render(res, refs, threshold) {
+  const sorted = [...res].sort((a, b) => b.score - a.score);
+  const passRate = res.filter((r) => r.passed).length / res.length;
+  const mean = res.reduce((s, r) => s + r.score, 0) / res.length;
+  $("summary").innerHTML = [
+    ["Generated", res.length], ["Pass rate", `${Math.round(passRate * 100)}%`],
+    ["Mean score", mean.toFixed(3)], ["Threshold", threshold.toFixed(2)],
+  ].map(([k, v]) => `<div class="stat"><b>${v}</b><small>${k}</small></div>`).join("");
+  const meter = (label, v) => v === undefined ? "" :
+    `<span>${label} ${v.toFixed(3)} <span class="meter"><i style="width:${Math.round(v * 100)}%"></i></span></span>`;
+  const list = $("list"); list.innerHTML = "";
+  for (const r of sorted) {
+    const div = document.createElement("div"); div.className = "item";
+    const p = document.createElement("p"); p.textContent = r.text;
+    const m = document.createElement("div"); m.className = "metrics";
+    m.innerHTML = `<span class="${r.passed ? "pass" : "fail"}">${r.passed ? "PASS" : "fail"} ${r.score.toFixed(3)}</span>`
+      + meter("semantic", r.semantic) + meter("rouge_l", r.rouge_l) + meter("jaccard", r.jaccard);
+    const c = document.createElement("div"); c.className = "closest"; c.textContent = `Closest sample: ${refs[r.closest_reference]}`;
+    div.append(p, m, c); list.append(div);
+  }
+  $("results").hidden = false;
+  $("download").disabled = false;
+}
+
+$("download").onclick = () => {
+  const blob = new Blob([lastResults.map((r) => JSON.stringify(r)).join("\n") + "\n"], { type: "application/x-ndjson" });
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: "brandsim-generated.jsonl" });
+  a.click(); URL.revokeObjectURL(a.href);
+};
+</script>
+</body>
+</html>

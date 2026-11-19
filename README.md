@@ -7,6 +7,10 @@ reference answers written the way the brand writes, you feed it model
 generations, and it returns a per-item similarity score, a pass/fail against a
 threshold, and a batch pass rate you can use to fail a CI run.
 
+**Try it in the browser:** [ladam027.github.io/brandsim](https://ladam027.github.io/brandsim/).
+Upload a small text sample and the page generates new sentences in the same voice,
+then scores each one with the same metrics. It runs entirely client-side.
+
 ## How it scores
 
 Each candidate is compared against every reference, and each metric keeps its
