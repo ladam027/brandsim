@@ -103,11 +103,13 @@
   </section>
 
   <section>
-    <h2>3. Convert your own text <span>(rewrites it in the chosen voice as you type)</span></h2>
+    <h2>3. Convert your own text <span>(rewrites it in the voice of whatever sample is loaded, as you type)</span></h2>
     <textarea id="mine" style="min-height:90px" placeholder="Type something, e.g. Hi, thanks for your order! It will ship soon. Sorry about the wait."></textarea>
+    <div class="closest" id="convLabel1"></div>
     <div id="converted" class="converted" aria-live="polite"></div>
     <div class="metrics" id="convMetrics"></div>
-    <div class="closest" id="convClosest"></div>
+    <div class="closest" id="convLabel2" style="margin-top:14px"></div>
+    <div id="convLines" class="converted"></div>
   </section>
 
   <section id="results" hidden>
@@ -323,13 +325,71 @@ async function loadVoice(id) {
 }
 $("voice").onchange = (e) => loadVoice(e.target.value);
 
-// Swap words and phrases for the voice's own, keep capitalisation, add its greeting and sign-off.
-function convert(text, id) {
-  const st = styles[id];
-  let out = text.trim().replace(voiceRe[id], (m) => {
-    const rep = st.map[m.toLowerCase()];
-    return m[0] === m[0].toUpperCase() && m[0] !== m[0].toLowerCase() ? rep[0].toUpperCase() + rep.slice(1) : rep;
+// Word groups that mean the same thing in different voices. For any sample, the variant the
+// sample uses most becomes the replacement for every other variant in the group.
+const GROUPS = [
+  ["hello", "hi", "hey", "heyyy", "hey dude", "ahoy", "good day", "greetings", "dear customer", "howdy", "hiya"],
+  ["thank you so much", "thank you", "thanks", "ty", "tysm", "mad thanks", "thank ye kindly", "i am most grateful", "many thanks", "we acknowledge receipt of your correspondence", "cheers", "much obliged"],
+  ["yes", "yeah", "yep", "aye", "indeed", "affirmative", "totally", "absolutely", "certainly"],
+  ["no", "nope", "nah", "nay", "negative"],
+  ["sorry", "apologies", "we apologize", "we regret any inconvenience", "most dreadfully sorry", "beggin' yer pardon", "bummer", "so sorry bestie", "we regret"],
+  ["order", "purchase", "purchase transaction", "haul", "esteemed order"],
+  ["package", "parcel", "shipment", "treasure chest"],
+  ["ships", "is dispatched", "is fulfilled", "sets sail", "goes out"],
+  ["ship", "dispatch", "fulfil", "set sail", "send out"],
+  ["shipping", "dispatch", "fulfilment", "sailin'", "delivery"],
+  ["refund", "reimbursement", "reimbursement of funds", "money back", "doubloons back"],
+  ["money", "funds", "cash", "coins", "doubloons"],
+  ["problem", "issue", "inconvenience", "squall", "wipeout", "trouble"],
+  ["help", "assist", "provide assistance", "be of service", "lend a hook", "support"],
+  ["quickly", "asap", "promptly", "with all due haste", "at full sail", "quick as a barrel", "within the applicable timeframe", "right away", "immediately"],
+  ["soon", "shortly", "presently", "in due course", "afore long", "rn-ish", "in a few sets"],
+  ["email", "e-mail", "written notice", "correspondence", "message in a bottle"],
+  ["customer", "the customer", "valued patron", "matey", "bestie", "dude", "client"],
+  ["friend", "buddy", "pal", "matey", "bestie", "dude"],
+  ["great", "excellent", "splendid", "rad", "iconic", "shipshape", "awesome", "wonderful"],
+  ["get", "receive", "catch", "obtain"],
+  ["change", "amend", "switch", "modify", "update"],
+  ["cancel", "withdraw", "abandon", "bail on", "terminate", "submit a cancellation request for"],
+  ["will", "shall", "gonna"],
+  ["you", "ye"], ["your", "yer"], ["my", "me"],
+  ["very", "super", "lowkey", "most", "extremely", "highly"],
+  ["really", "literally", "truly"],
+  ["store", "shop", "establishment", "harbor", "the company"],
+  ["buy", "purchase", "acquire"],
+  ["want", "wish", "wanna", "would like"],
+  ["can't", "cannot", "may not"], ["don't", "do not"], ["won't", "shall not", "will not"],
+];
+const esc = (k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const countIn = (text, phrase) => (text.match(new RegExp(`\\b${esc(phrase)}\\b`, "gi")) || []).length;
+
+// Build {variant: target} from the sample's own word choices.
+function learnMap(sampleText) {
+  const map = {};
+  for (const group of GROUPS) {
+    // count each variant, minus occurrences that sit inside a longer variant ("order" inside "esteemed order")
+    const counts = group.map((v) => countIn(sampleText, v)
+      - group.filter((o) => o !== v && o.includes(v)).reduce((n, o) => n + countIn(sampleText, o), 0));
+    const best = counts.indexOf(Math.max(...counts));
+    if (counts[best] <= 0) continue;
+    for (const v of group) if (v !== group[best] && !(v in map)) map[v] = group[best];
+  }
+  return map;
+}
+function applyMap(text, map) {
+  const keys = Object.keys(map).sort((a, b) => b.length - a.length).map(esc);
+  if (!keys.length) return text;
+  return text.replace(new RegExp(`\\b(${keys.join("|")})\\b`, "gi"), (m) => {
+    const rep = map[m.toLowerCase()];
+    return /^[A-Z]/.test(m) ? rep[0].toUpperCase() + rep.slice(1) : rep;
   });
+}
+
+// Preset voices add their hand-written phrases, greeting and sign-off on top of the learned words.
+function convert(text, refsText, id) {
+  const st = id && styles[id];
+  let out = applyMap(text.trim(), { ...learnMap(refsText), ...(st ? st.map : {}) });
+  if (!st) return out;
   if (st.lowercase) out = out.toLowerCase();
   const greetings = [st.opener.split(/[\s,!.]/)[0], st.map.hi].map((g) => g.toLowerCase());
   if (!greetings.some((g) => out.toLowerCase().startsWith(g))) out = `${st.opener} ${out}`;
@@ -341,26 +401,31 @@ function convert(text, id) {
 let convTimer = 0, convSeq = 0;
 function convertNow() { clearTimeout(convTimer); convTimer = setTimeout(runConvert, 250); }
 $("mine").addEventListener("input", convertNow);
+const clearConv = () => ["convLabel1", "converted", "convMetrics", "convLabel2", "convLines"].forEach((i) => ($(i).textContent = ""));
 async function runConvert() {
   const seq = ++convSeq;
   const text = $("mine").value.trim(), id = $("voice").value;
   const refs = (() => { try { return parseSample($("sample").value, fileName); } catch { return []; } })();
-  if (!text) { $("converted").textContent = ""; $("convMetrics").innerHTML = ""; $("convClosest").textContent = ""; return; }
+  if (!text) return clearConv();
+  if (!refs.length) { clearConv(); $("convMetrics").textContent = "Load a sample above first."; return; }
   await stylesReady;
-  const out = id ? convert(text, id) : text;
-  $("converted").textContent = id ? out : "";
-  if (!id) $("convMetrics").innerHTML = `<span>Pick one of the five voices above to convert into it. Your text is scored against your own sample below.</span>`;
-  if (!refs.length) { $("convClosest").textContent = ""; return; }
+  const name = id ? `the ${styles[id].label} sample` : "your sample";
+  const out = convert(text, refs.join("\n"), id);
+  const mine = text.split(/(?<=[.!?])\s+/).filter((x) => x.trim());
   const useSem = $("semantic").checked;
-  let before, after;
-  try { [before, after] = await score([text, out], refs, 0, useSem); }
-  catch { [before, after] = await score([text, out], refs, 0, false); }
+  let res;
+  try { res = await score([text, out, ...mine], refs, 0, useSem); }
+  catch { res = await score([text, out, ...mine], refs, 0, false); }
   if (seq !== convSeq) return; // a newer keystroke already started
+  const [before, after, ...per] = res;
+  const lines = [...new Set(per.map((r) => refs[r.closest_reference]))].join(" ");
   const s = (r) => r.score.toFixed(3);
-  if (id) $("convMetrics").innerHTML = `<span>Match to the ${styles[id].label} sample: ${s(before)} as typed → <b>${s(after)}</b> converted</span>`
+  $("convLabel1").textContent = `Your words, with ${name}'s vocabulary:`;
+  $("converted").textContent = out;
+  $("convMetrics").innerHTML = `<span>Match to ${name}: ${s(before)} as typed → <b>${s(after)}</b> converted</span>`
     + (useSem ? "" : `<span>(tick Semantic score above to include meaning)</span>`);
-  else $("convMetrics").innerHTML += ` <span>Score: ${s(before)}</span>`;
-  $("convClosest").textContent = `Closest in meaning in the sample: ${refs[before.closest_reference]}`;
+  $("convLabel2").textContent = `The same meaning in ${name}'s own lines${useSem ? "" : " (closest by wording; tick Semantic score for closest by meaning)"}:`;
+  $("convLines").textContent = lines;
 }
 $("semantic").addEventListener("change", convertNow);
 loadVoice($("voice").value);
