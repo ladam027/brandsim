@@ -8,8 +8,10 @@ generations, and it returns a per-item similarity score, a pass/fail against a
 threshold, and a batch pass rate you can use to fail a CI run.
 
 **Try it in the browser:** [ladam027.github.io/brandsim](https://ladam027.github.io/brandsim/).
-Upload a small text sample and the page generates new sentences in the same voice,
-then scores each one with the same metrics. It runs entirely client-side.
+Pick one of five sample voices (pirate captain, royal butler, Gen Z bestie, corporate
+legal, surfer dude) or upload your own sample. The page generates new sentences in
+that voice, rewrites your own typing into it, and scores everything with the same
+metrics. It runs entirely client-side. The samples live in [`docs/samples/`](docs/samples/).
 
 ## How it scores
 

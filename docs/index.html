@@ -50,6 +50,9 @@
   .pass { color: var(--pass); font-weight: 600; }
   .fail { color: var(--fail); font-weight: 600; }
   .closest { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  select { font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .converted { margin: 12px 0 8px; padding: 12px 14px; border-left: 3px solid var(--accent); background: var(--bg); border-radius: 0 8px 8px 0; font-size: 16px; min-height: 1.5em; }
+  .converted:empty { display: none; }
   footer { color: var(--muted); font-size: 13px; }
   a { color: var(--accent); }
 </style>
@@ -60,13 +63,22 @@
   <p class="lede">Paste or upload a small sample of on-brand text. The page writes new sentences in the same voice, then scores each one against your sample using the same method as the <a href="https://github.com/ladam027/brandsim">brandsim</a> Python tool. Everything runs in your browser and nothing is uploaded anywhere.</p>
 
   <section>
-    <h2>1. Sample <span>(.txt one per line, or .jsonl with a "text" field)</span></h2>
-    <textarea id="sample" spellcheck="false" placeholder="Paste a few sentences of reference text here..."></textarea>
-    <div class="row">
+    <h2>1. Sample <span>(pick a voice, or paste or upload your own: .txt one per line, or .jsonl with a "text" field)</span></h2>
+    <div class="row" style="margin:0 0 12px">
+      <label>Voice
+        <select id="voice">
+          <option value="">Your own text</option>
+          <option value="pirate" selected>Pirate captain</option>
+          <option value="butler">Royal butler</option>
+          <option value="genz">Gen Z bestie</option>
+          <option value="corporate">Corporate legal</option>
+          <option value="surfer">Surfer dude</option>
+        </select>
+      </label>
       <label class="file" tabindex="-1">Upload file<input type="file" id="file" accept=".txt,.jsonl,.csv,.md,text/plain"></label>
-      <button id="example">Load example</button>
       <span class="status" id="sampleInfo" style="margin:0"></span>
     </div>
+    <textarea id="sample" spellcheck="false" placeholder="Paste a few sentences of reference text here..."></textarea>
   </section>
 
   <section>
@@ -90,8 +102,16 @@
     <div class="status" id="status" role="status" aria-live="polite"></div>
   </section>
 
+  <section>
+    <h2>3. Convert your own text <span>(rewrites it in the chosen voice as you type)</span></h2>
+    <textarea id="mine" style="min-height:90px" placeholder="Type something, e.g. Hi, thanks for your order! It will ship soon. Sorry about the wait."></textarea>
+    <div id="converted" class="converted" aria-live="polite"></div>
+    <div class="metrics" id="convMetrics"></div>
+    <div class="closest" id="convClosest"></div>
+  </section>
+
   <section id="results" hidden>
-    <h2>3. Results</h2>
+    <h2>Generated sentences</h2>
     <div class="summary" id="summary"></div>
     <div id="list"></div>
   </section>
@@ -101,18 +121,6 @@
 
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const EXAMPLE = `Thanks for reaching out! Our Everyday Serum is fragrance-free and safe for sensitive skin.
-Apply two drops each morning after cleansing.
-Happy to help! Orders ship within 2 business days.
-You'll get a tracking link by email as soon as your package is on its way.
-We're sorry your order arrived damaged. We'll send a free replacement right away.
-There's no need to return the original.
-Great question! Our Night Repair Cream is vegan and cruelty-free.
-Every jar is made with recyclable packaging.
-Thanks for your patience! We'll email you as soon as the serum is back in stock.
-Happy to help! You can change your shipping address until your order ships.
-Great question! The Everyday Serum works well under makeup and sunscreen.
-We're sorry for the wait. Your refund will reach your card within 5 business days.`;
 
 // ---------- parsing ----------
 function parseSample(raw, name = "") {
@@ -230,14 +238,14 @@ function refreshInfo() {
     $("sampleInfo").textContent = n ? `${n} sentence${n === 1 ? "" : "s"} in sample` : "";
   } catch { $("sampleInfo").textContent = "Couldn't read that .jsonl. Each line needs a \"text\" field."; }
 }
-$("sample").addEventListener("input", () => { fileName = ""; refreshInfo(); });
-$("example").onclick = () => { $("sample").value = EXAMPLE; fileName = ""; refreshInfo(); };
+$("sample").addEventListener("input", () => { fileName = ""; $("voice").value = ""; refreshInfo(); convertNow(); });
 $("file").onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return;
   if (f.size > 2_000_000) { $("sampleInfo").textContent = "That file is over 2 MB. A small sample works best."; return; }
   fileName = f.name.toLowerCase();
   $("sample").value = await f.text();
-  refreshInfo();
+  $("voice").value = "";
+  refreshInfo(); convertNow();
 };
 
 $("go").onclick = async () => {
@@ -290,6 +298,72 @@ function render(res, refs, threshold) {
   $("results").hidden = false;
   $("download").disabled = false;
 }
+
+// ---------- voices ----------
+let styles = {}, voiceRe = {};
+const stylesReady = fetch("samples/styles.json").then((r) => r.json()).then((j) => {
+  styles = j;
+  for (const [id, st] of Object.entries(j)) {
+    const keys = Object.keys(st.map).sort((a, b) => b.length - a.length)
+      .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    voiceRe[id] = new RegExp(`\\b(${keys.join("|")})\\b`, "gi");
+  }
+});
+
+async function loadVoice(id) {
+  if (!id) return;
+  $("sampleInfo").textContent = "Loading sample...";
+  try {
+    const r = await fetch(`samples/${id}.txt`);
+    if (!r.ok) throw new Error(r.status);
+    $("sample").value = await r.text();
+    fileName = "";
+  } catch { $("sampleInfo").textContent = "Couldn't load that sample."; return; }
+  refreshInfo(); convertNow();
+}
+$("voice").onchange = (e) => loadVoice(e.target.value);
+
+// Swap words and phrases for the voice's own, keep capitalisation, add its greeting and sign-off.
+function convert(text, id) {
+  const st = styles[id];
+  let out = text.trim().replace(voiceRe[id], (m) => {
+    const rep = st.map[m.toLowerCase()];
+    return m[0] === m[0].toUpperCase() && m[0] !== m[0].toLowerCase() ? rep[0].toUpperCase() + rep.slice(1) : rep;
+  });
+  if (st.lowercase) out = out.toLowerCase();
+  const greetings = [st.opener.split(/[\s,!.]/)[0], st.map.hi].map((g) => g.toLowerCase());
+  if (!greetings.some((g) => out.toLowerCase().startsWith(g))) out = `${st.opener} ${out}`;
+  if (!/[.!?✨🤙]$/.test(out)) out += ".";
+  if (!out.endsWith(st.closer)) out += ` ${st.closer}`;
+  return out;
+}
+
+let convTimer = 0, convSeq = 0;
+function convertNow() { clearTimeout(convTimer); convTimer = setTimeout(runConvert, 250); }
+$("mine").addEventListener("input", convertNow);
+async function runConvert() {
+  const seq = ++convSeq;
+  const text = $("mine").value.trim(), id = $("voice").value;
+  const refs = (() => { try { return parseSample($("sample").value, fileName); } catch { return []; } })();
+  if (!text) { $("converted").textContent = ""; $("convMetrics").innerHTML = ""; $("convClosest").textContent = ""; return; }
+  await stylesReady;
+  const out = id ? convert(text, id) : text;
+  $("converted").textContent = id ? out : "";
+  if (!id) $("convMetrics").innerHTML = `<span>Pick one of the five voices above to convert into it. Your text is scored against your own sample below.</span>`;
+  if (!refs.length) { $("convClosest").textContent = ""; return; }
+  const useSem = $("semantic").checked;
+  let before, after;
+  try { [before, after] = await score([text, out], refs, 0, useSem); }
+  catch { [before, after] = await score([text, out], refs, 0, false); }
+  if (seq !== convSeq) return; // a newer keystroke already started
+  const s = (r) => r.score.toFixed(3);
+  if (id) $("convMetrics").innerHTML = `<span>Match to the ${styles[id].label} sample: ${s(before)} as typed → <b>${s(after)}</b> converted</span>`
+    + (useSem ? "" : `<span>(tick Semantic score above to include meaning)</span>`);
+  else $("convMetrics").innerHTML += ` <span>Score: ${s(before)}</span>`;
+  $("convClosest").textContent = `Closest in meaning in the sample: ${refs[before.closest_reference]}`;
+}
+$("semantic").addEventListener("change", convertNow);
+loadVoice($("voice").value);
 
 $("download").onclick = () => {
   const blob = new Blob([lastResults.map((r) => JSON.stringify(r)).join("\n") + "\n"], { type: "application/x-ndjson" });
